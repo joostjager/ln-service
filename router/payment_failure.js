@@ -152,6 +152,9 @@ module.exports = ({failure, keys}) => {
   case 'PERMANENT_CHANNEL_FAILURE':
     return {details, code: 503, message: 'PermanentChannelFailure'};
 
+  case 'STUCK_HTLC':
+    return {details, code: 503, message: 'StuckHtlc'};
+  
   default:
     return {details, code: 500, message: 'UnexpectedPayViaRoutesFailure'};
   }

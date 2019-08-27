@@ -4,7 +4,7 @@ import "rpc.proto";
 
 package routerrpc;
 
-// option go_package = "github.com/lightningnetwork/lnd/lnrpc/routerrpc";
+option go_package = "github.com/lightningnetwork/lnd/lnrpc/routerrpc";
 
 message SendPaymentRequest {
     /// The identity pubkey of the payment recipient
@@ -63,6 +63,13 @@ message SendPaymentRequest {
     Optional route hints to reach the destination through private channels.
     */
     repeated lnrpc.RouteHint route_hints = 10 [json_name = "route_hints"];
+
+    /** 
+    An optional field that can be used to pass an arbitrary set of TLV records
+    to a peer which understands the new records. This can be used to pass
+    application specific data during the payment attempt.
+    */
+    map<uint64, bytes> dest_tlv = 11;
 }
 
 message TrackPaymentRequest {
@@ -154,12 +161,47 @@ message SendToRouteRequest {
 
     /// Route that should be used to attempt to complete the payment.
     lnrpc.Route route = 2;
+
+    /**
+    Timeout in seconds used for pre-pay probing. If set to zero, no probing
+    will take place.
+    */
+    int32 probe_timeout = 3;
 }
 
 message SendToRouteResponse {
     /// The preimage obtained by making the payment.
     bytes preimage = 1;
 
+    /// The failure message in case the payment failed.
+    Failure failure = 2;
+}
+
+message ProbeRouteRequest {
+    /**
+    The total amount in millisatoshis.
+    */
+    int64 total_amt_msat = 1;
+
+    /**
+    The CLTV delta from the current height that should be used to set the
+    timelock for the final hop.
+    */
+    int32 final_cltv_delta = 2;
+
+    /**
+    List of channels that form the route to probe.
+    */
+    repeated uint64 route_channels = 3;
+
+    /**
+    Timeout in seconds used for pre-pay probing. If set to zero, no probing
+    will take place.
+    */
+    int32 per_hop_timeout = 4;
+}
+
+message ProbeRouteResponse {
     /// The failure message in case the payment failed.
     Failure failure = 2;
 }
@@ -173,7 +215,7 @@ message Failure {
         */
         RESERVED = 0;
 
-        UNKNOWN_PAYMENT_HASH = 1;
+        INCORRECT_OR_UNKNOWN_PAYMENT_DETAILS = 1;
         INCORRECT_PAYMENT_AMOUNT = 2;
         FINAL_INCORRECT_CLTV_EXPIRY = 3;
         FINAL_INCORRECT_HTLC_AMOUNT = 4;
@@ -196,6 +238,12 @@ message Failure {
         PERMANENT_CHANNEL_FAILURE = 21;
 
         /**
+        Pre-pay probing detected a stuck htlc on the outgoing link of the node
+        indicated by failure_source_index
+        */
+        STUCK_HTLC = 997;
+
+        /**
         The error source is known, but the failure itself couldn't be decoded.
         */
         UNKNOWN_FAILURE = 998;
@@ -210,7 +258,7 @@ message Failure {
     /// Failure code as defined in the Lightning spec
     FailureCode code = 1;
 
-    bytes failure_source_pubkey = 2;
+    reserved 2;
 
     /// An optional channel update message.
     ChannelUpdate channel_update = 3;
@@ -326,10 +374,10 @@ message QueryMissionControlRequest {}
 /// QueryMissionControlResponse contains mission control state.
 message QueryMissionControlResponse {
     /// Node-level mission control state.
-    repeated NodeHistory nodes = 1;
+    repeated NodeHistory nodes = 1 [json_name = "nodes"];
 
     /// Node pair-level mission control state.
-    repeated PairHistory pairs = 2;
+    repeated PairHistory pairs = 2 [json_name = "pairs"];
 }
 
 /// NodeHistory contains the mission control state for a particular node.
@@ -346,40 +394,28 @@ message NodeHistory {
     **/
     float other_success_prob = 3 [json_name = "other_success_prob"];
 
-    repeated ChannelHistory channels = 4 [json_name = "channels"];
-}
-
-/// NodeHistory contains the mission control state for a particular channel.
-message ChannelHistory {
-    /// Short channel id
-    uint64 channel_id = 1 [json_name = "channel_id"];
-    
-    /// Time stamp of last failure.
-    int64 last_fail_time = 2 [json_name = "last_fail_time"];
-
-    /// Minimum penalization amount.
-    int64 min_penalize_amt_sat = 3 [json_name = "min_penalize_amt_sat"];
-
-    /// Estimation of success probability for this channel.
-    float success_prob = 4 [json_name = "success_prob"];
+    reserved 4;
 }
 
 /// PairHistory contains the mission control state for a particular node pair.
 message PairHistory {
     /// The source node pubkey of the pair.
-    bytes node_from = 1 [json_name="node_from"];
-
+    bytes node_from = 1 [json_name ="node_from"];
+    
     /// The destination node pubkey of the pair.
     bytes node_to = 2 [json_name="node_to"];
+    
+    /// Time stamp of last result.
+    int64 timestamp = 3 [json_name = "timestamp"];
 
-    /// Time stamp of last failure.
-    int64 last_fail_time = 3 [json_name = "last_fail_time"];
-
-    /// Minimum penalization amount.
+    /// Minimum penalization amount (only applies to failed attempts).
     int64 min_penalize_amt_sat = 4 [json_name = "min_penalize_amt_sat"];
 
     /// Estimation of success probability for this pair.
     float success_prob = 5 [json_name = "success_prob"];
+
+    /// Whether the last payment attempt through this pair was successful.
+    bool last_attempt_successful = 6 [json_name = "last_attempt_successful"];
 }
 
 service Router {
@@ -421,4 +457,6 @@ service Router {
     It is a development feature.
     */
     rpc QueryMissionControl(QueryMissionControlRequest) returns (QueryMissionControlResponse);
+
+    rpc ProbeRoute(ProbeRouteRequest) returns (ProbeRouteResponse);
 }

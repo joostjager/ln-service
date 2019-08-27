@@ -235,10 +235,17 @@ module.exports = args => {
       attempt: ['getInfo', 'waitForSubscribers', ({getInfo}, cbk) => {
         emitter.emit('paying', {route});
 
-        return args.lnd.router.sendToRoute({
-          payment_hash: Buffer.from(id, 'hex'),
-          route: rpcRouteFromRoute(route),
-        },
+        chanIDs = route.hops.map(hop => chanNumber({channel: hop.channel}).number);
+
+        req = {
+          route_channels: chanIDs,
+          final_cltv_delta: 40,
+          total_amt_msat: route.mtokens,
+          per_hop_timeout: 30, // seconds
+        }
+        args.logger.debug({req});
+
+        return args.lnd.router.probeRoute(req,
         (err, res) => {
           if (!!err && err.details === unknownWireError) {
             return cbk(null, {});
@@ -258,11 +265,11 @@ module.exports = args => {
 
           const failure = res.failure;
 
+          args.logger.debug({failure});
+
           const failAt = !failure ? undefined : failure.failure_source_index;
 
-          const failKey = !failure ? undefined : failure.failure_source_pubkey;
-
-          if (!!failKey && !failKey.length && failAt !== undefined) {
+          if (failAt !== undefined) {
             const failureSource = !failAt ? getInfo : route.hops[failAt - 1];
 
             const failHopKey = failureSource.public_key;
@@ -313,7 +320,16 @@ module.exports = args => {
           return cbk();
         }
 
-        return cbk(null, paymentFailure({keys, failure: attempt.failure}));
+        f = paymentFailure({keys, failure: attempt.failure});
+
+        // For stuck htlcs, there is no channel update to extract the channel id
+        // from. Set the channel based on failure_source_index. 
+        if (f.message == 'StuckHtlc') {
+          chan = route.hops[attempt.failure.failure_source_index].channel
+          f.details.channel = chan
+        }
+
+        return cbk(null, f);
       }],
 
       // Attempt success
